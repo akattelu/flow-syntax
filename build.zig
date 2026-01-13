@@ -1,13 +1,13 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
     const use_tree_sitter = b.option(bool, "use_tree_sitter", "Enable tree-sitter (default: yes)") orelse true;
     const options = b.addOptions();
     options.addOption(bool, "use_tree_sitter", use_tree_sitter);
     const options_mod = options.createModule();
-
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
 
     const tree_sitter_dep = b.dependency("tree_sitter", .{
         .target = target,
@@ -160,11 +160,30 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // Shared library output
+    const lib = b.addLibrary(.{
+        .name = "syntax",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/exports.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    lib.root_module.addImport("build_options", options_mod);
+    lib.root_module.addImport("cbor", cbor_dep.module("cbor"));
+    lib.root_module.addImport("treez", tree_sitter_dep.module("treez"));
+    lib.linkLibrary(tree_sitter_dep.artifact("tree-sitter"));
+    lib.linkLibC();
+
     if (use_tree_sitter) {
         const ts_bin_query_gen_step = b.addRunArtifact(ts_bin_query_gen);
         const output = ts_bin_query_gen_step.addOutputFileArg("bin_queries.cbor");
         syntax_mod.addAnonymousImport("syntax_bin_queries", .{ .root_source_file = output });
+        lib.root_module.addAnonymousImport("syntax_bin_queries", .{ .root_source_file = output });
     }
+
+    b.installArtifact(lib);
 }
 
 fn ts_queryfile(b: *std.Build, dep: *std.Build.Dependency, bin_gen: *std.Build.Step.Compile, comptime sub_path: []const u8) void {
